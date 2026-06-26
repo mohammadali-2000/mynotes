@@ -1,79 +1,74 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import TiptapEditor from '@/components/editor/TiptapEditor';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Star, MoreHorizontal, FileDown } from 'lucide-react';
-import { api } from '@/lib/api';
+import { FileDown, Trash } from 'lucide-react';
 
 export default function NotesWorkspace() {
   const { noteId } = useParams();
-  const { notes, activeNoteId, setActiveNoteId, updateNote, addNote } = useWorkspaceStore();
+  const navigate = useNavigate();
+  const { notes, activeNoteId, setActiveNoteId, updateNote, addNote, deleteNote } = useWorkspaceStore();
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-  const [lastSaved, setLastSaved] = useState<Date | null>(null);
 
-  const activeNote = notes.find(n => n.id === Number(noteId));
+  const activeNote = notes.find(n => n.id === Number(noteId)) || notes.find(n => n.id === activeNoteId);
 
   useEffect(() => {
     if (noteId && activeNote) {
       setActiveNoteId(Number(noteId));
       setTitle(activeNote.title || '');
       setContent(activeNote.content || '');
-    } else if (!noteId) {
+    } else if (!noteId && activeNote) {
+      navigate(`/app/notes/${activeNote.id}`);
+    } else if (!noteId && !activeNote) {
       setActiveNoteId(null);
       setTitle('');
       setContent('');
     }
-  }, [noteId, activeNote, setActiveNoteId]);
+  }, [noteId, activeNote, setActiveNoteId, navigate]);
 
-  // Debounced save
+  // Save changes locally
   useEffect(() => {
-    if (!activeNoteId) return;
+    if (!activeNote) return;
     
-    const timeoutId = setTimeout(async () => {
-      if (title !== activeNote?.title || content !== activeNote?.content) {
-        setIsSaving(true);
-        try {
-          const updated = await api.put(`/notes/${activeNoteId}`, {
-            title,
-            content,
-            folder_id: activeNote?.folder_id,
-            is_pinned: activeNote?.is_pinned,
-            is_archived: activeNote?.is_archived,
-            in_trash: activeNote?.in_trash
-          });
-          updateNote(activeNoteId, updated);
-          setLastSaved(new Date());
-        } catch (error) {
-          console.error("Failed to save note:", error);
-        } finally {
-          setIsSaving(false);
-        }
+    const timeoutId = setTimeout(() => {
+      if (title !== activeNote.title || content !== activeNote.content) {
+        updateNote(activeNote.id, {
+          title,
+          content,
+        });
       }
-    }, 2000); // 2 second debounce
+    }, 1000); // 1 second debounce for local save
 
     return () => clearTimeout(timeoutId);
-  }, [title, content, activeNoteId, activeNote, updateNote]);
+  }, [title, content, activeNote, updateNote]);
 
-  const handleCreateNew = async () => {
-    try {
-      const newNote = await api.post('/notes', {
-        title: 'Untitled Note',
-        content: '',
-        folder_id: null
-      });
-      addNote(newNote);
-      window.history.pushState(null, '', `/app/notes/${newNote.id}`);
-      setActiveNoteId(newNote.id);
-    } catch (error) {
-      console.error("Failed to create note:", error);
+  const handleCreateNew = () => {
+    const newNote = {
+      id: Date.now(),
+      title: 'Untitled Note',
+      content: '',
+      folder_id: null,
+      is_pinned: false,
+      is_archived: false,
+      in_trash: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    addNote(newNote);
+    navigate(`/app/notes/${newNote.id}`);
+  };
+
+  const handleDelete = () => {
+    if (activeNote) {
+      deleteNote(activeNote.id);
+      navigate('/app');
     }
   };
 
-  if (!noteId || !activeNote) {
+  if (!activeNote) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center h-full text-muted-foreground p-8">
         <div className="max-w-md text-center">
@@ -91,26 +86,10 @@ export default function NotesWorkspace() {
   return (
     <div className="flex-1 h-full flex flex-col max-w-4xl mx-auto w-full">
       {/* Editor Header */}
-      <div className="flex items-center justify-between py-4 px-8 border-b">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span>{isSaving ? 'Saving...' : lastSaved ? `Saved at ${lastSaved.toLocaleTimeString()}` : ''}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button 
-            variant="ghost" 
-            size="icon"
-            onClick={() => {
-              const updated = { is_pinned: !activeNote.is_pinned };
-              updateNote(activeNote.id, updated);
-              api.put(`/notes/${activeNote.id}`, { ...activeNote, ...updated });
-            }}
-          >
-            <Star className={`h-4 w-4 ${activeNote.is_pinned ? 'fill-yellow-500 text-yellow-500' : ''}`} />
-          </Button>
-          <Button variant="ghost" size="icon">
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </div>
+      <div className="flex items-center justify-end py-4 px-8 border-b">
+        <Button variant="ghost" size="icon" onClick={handleDelete} className="text-destructive hover:bg-destructive/10">
+          <Trash className="h-4 w-4" />
+        </Button>
       </div>
 
       {/* Editor Body */}
@@ -122,7 +101,6 @@ export default function NotesWorkspace() {
           onChange={(e) => setTitle(e.target.value)}
         />
         
-        {/* Tiptap Editor wraps the content */}
         <TiptapEditor 
           initialContent={activeNote.content || ''} 
           onChange={(newContent) => setContent(newContent)}
